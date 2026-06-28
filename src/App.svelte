@@ -16,6 +16,7 @@
     RotateCcw,
     Save,
     Search,
+    Settings,
     Sprout,
     Trash2,
     Unlink,
@@ -24,7 +25,6 @@
   import { invoke } from "@tauri-apps/api/core";
   import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
   import {
-    DAILY_CARD_LIMIT,
     FOCUS_OPTIONS,
     createCardId,
     formatCardId,
@@ -36,6 +36,16 @@
     type WisdomCard,
   } from "./lib/cards";
   import { loadPersistedCards, savePersistedCards } from "./lib/database";
+  import {
+    DEFAULT_SETTINGS,
+    MAX_DAILY_CARD_LIMIT,
+    MIN_DAILY_CARD_LIMIT,
+    loadPersistedSettings,
+    savePersistedSettings,
+    type AppSettings,
+    type CardDensity,
+    type DefaultViewMode,
+  } from "./lib/settings";
   import CardTree from "./lib/CardTree.svelte";
 
   const todayKey = getDateKey();
@@ -45,9 +55,13 @@
   let searchText = "";
   let editingId: string | null = null;
   let isEditorOpen = false;
+  let isSettingsOpen = false;
   let isLoadingCards = true;
+  let isLoadingSettings = true;
   let isSaving = false;
+  let isSavingSettings = false;
   let viewMode: "list" | "tree" = "list";
+  let settings: AppSettings = DEFAULT_SETTINGS;
   let body = "";
   let context = "";
   let mdLink = "";
@@ -56,25 +70,37 @@
   let focus: CardFocus = "灵感";
   let tagText = "";
   let errorMessage = "";
+  let settingsMessage = "";
 
   onMount(() => {
-    void initializeCards();
+    void initializeApp();
   });
 
   $: todayCards = sortCardsNewestFirst(cards.filter((card) => card.dateKey === todayKey));
   $: selectedCards = sortCardsNewestFirst(cards.filter((card) => card.dateKey === selectedDate));
   $: visibleCards = selectedCards.filter(matchesSearch);
-  $: selectedRemaining = Math.max(DAILY_CARD_LIMIT - selectedCards.length, 0);
+  $: dailyCardLimit = settings.dailyCardLimit;
+  $: selectedRemaining = Math.max(dailyCardLimit - selectedCards.length, 0);
   $: isSelectedDayAtLimit = selectedRemaining === 0 && !editingId;
   $: isAtLimit = isSelectedDayAtLimit;
   $: isFormDisabled = isAtLimit || isLoadingCards || isSaving;
   $: dateKeys = Array.from(new Set([todayKey, selectedDate, ...cards.map((card) => card.dateKey)])).sort((a, b) =>
     b.localeCompare(a),
   );
-  $: todaySlotStates = Array.from({ length: DAILY_CARD_LIMIT }, (_, index) => index < todayCards.length);
-  $: selectedSlotStates = Array.from({ length: DAILY_CARD_LIMIT }, (_, index) => index < selectedCards.length);
+  $: todaySlotStates = Array.from(
+    { length: Math.max(dailyCardLimit, todayCards.length) },
+    (_, index) => index < todayCards.length,
+  );
+  $: selectedSlotStates = Array.from(
+    { length: Math.max(dailyCardLimit, selectedCards.length) },
+    (_, index) => index < selectedCards.length,
+  );
   $: dayWord = selectedDate === todayKey ? "今天" : formatDateKey(selectedDate);
   $: isNextDayDisabled = selectedDate >= todayKey;
+
+  async function initializeApp() {
+    await Promise.all([initializeCards(), initializeSettings()]);
+  }
 
   async function initializeCards() {
     try {
@@ -83,6 +109,19 @@
       errorMessage = "读取本地数据库失败。";
     } finally {
       isLoadingCards = false;
+    }
+  }
+
+  async function initializeSettings() {
+    try {
+      settings = await loadPersistedSettings();
+      viewMode = settings.defaultViewMode;
+    } catch {
+      settingsMessage = "读取设置失败，已使用默认设置。";
+      settings = DEFAULT_SETTINGS;
+      viewMode = DEFAULT_SETTINGS.defaultViewMode;
+    } finally {
+      isLoadingSettings = false;
     }
   }
 
@@ -145,8 +184,8 @@
       return;
     }
 
-    if (selectedCards.length >= DAILY_CARD_LIMIT) {
-      errorMessage = `${dayWord}的三张已经写满。`;
+    if (selectedCards.length >= dailyCardLimit) {
+      errorMessage = `${dayWord}的卡片已经写满。`;
       return;
     }
 
@@ -247,7 +286,7 @@
 
   function openChildCardEditor(parentCard: WisdomCard) {
     if (isAtLimit) {
-      errorMessage = `${dayWord}的三张已经写满。`;
+      errorMessage = `${dayWord}的卡片已经写满。`;
       return;
     }
 
@@ -269,6 +308,57 @@
     }
 
     resetForm();
+  }
+
+  function openSettings() {
+    settingsMessage = "";
+    isSettingsOpen = true;
+  }
+
+  function closeSettings() {
+    if (isSavingSettings) {
+      return;
+    }
+
+    isSettingsOpen = false;
+  }
+
+  async function updateDefaultViewMode(defaultViewMode: DefaultViewMode) {
+    await persistSettings({ ...settings, defaultViewMode });
+  }
+
+  async function updateCardDensity(cardDensity: CardDensity) {
+    await persistSettings({ ...settings, cardDensity });
+  }
+
+  async function updateDailyCardLimit(rawValue: string) {
+    const nextLimit = clampDailyCardLimit(Number(rawValue));
+    await persistSettings({ ...settings, dailyCardLimit: nextLimit });
+  }
+
+  async function persistSettings(nextSettings: AppSettings) {
+    const previousSettings = settings;
+    settings = nextSettings;
+    settingsMessage = "";
+    isSavingSettings = true;
+
+    try {
+      await savePersistedSettings(nextSettings);
+      settingsMessage = "设置已保存。";
+    } catch {
+      settings = previousSettings;
+      settingsMessage = "保存设置失败。";
+    } finally {
+      isSavingSettings = false;
+    }
+  }
+
+  function clampDailyCardLimit(value: number): number {
+    if (!Number.isFinite(value)) {
+      return DEFAULT_SETTINGS.dailyCardLimit;
+    }
+
+    return Math.min(MAX_DAILY_CARD_LIMIT, Math.max(MIN_DAILY_CARD_LIMIT, Math.round(value)));
   }
 
   function selectDate(dateKey: string) {
@@ -404,7 +494,11 @@
 
   function handleModalBackdropClick(event: MouseEvent) {
     if (event.currentTarget === event.target) {
-      closeEditor();
+      if (isSettingsOpen) {
+        closeSettings();
+      } else {
+        closeEditor();
+      }
     }
   }
 
@@ -417,14 +511,14 @@
   }
 </script>
 
-<main class="app-shell">
+<main class="app-shell" class:compact-cards={settings.cardDensity === "compact"}>
   <section class="topbar" aria-label="今日状态">
     <div class="brand-block">
       <div class="brand-mark" aria-hidden="true">
         <BookOpen size={22} strokeWidth={2.2} />
       </div>
       <div>
-        <h1>三张智慧卡</h1>
+        <h1>智慧卡</h1>
         <p>{formatDateKey(todayKey)}</p>
       </div>
     </div>
@@ -442,11 +536,24 @@
         <span>卡片树</span>
       </button>
 
-      <div class="day-meter" aria-label={`今日已写 ${todayCards.length} 张`}>
+      <button
+        type="button"
+        class="topbar-action"
+        class:active={isSettingsOpen}
+        disabled={isLoadingSettings}
+        on:click={openSettings}
+        title="设置"
+        aria-label="设置"
+      >
+        <Settings size={18} />
+        <span>设置</span>
+      </button>
+
+      <div class="day-meter" aria-label={`今日已写 ${todayCards.length} 张，上限 ${dailyCardLimit} 张`}>
         {#each todaySlotStates as filled, index}
           <span class:filled aria-label={`第 ${index + 1} 张`}></span>
         {/each}
-        <strong>{todayCards.length}/{DAILY_CARD_LIMIT}</strong>
+        <strong>{todayCards.length}/{dailyCardLimit}</strong>
       </div>
     </div>
   </section>
@@ -517,7 +624,7 @@
         <div class="selected-day-summary">
           <CalendarDays size={17} aria-hidden="true" />
           <strong>{selectedDate}</strong>
-          <span>{selectedCards.length}/{DAILY_CARD_LIMIT}</span>
+          <span>{selectedCards.length}/{dailyCardLimit}</span>
         </div>
 
         <button type="button" disabled={isNextDayDisabled} on:click={goToNextDay}>
@@ -796,7 +903,7 @@
           {#if errorMessage}
             <p class="form-message" role="alert">{errorMessage}</p>
           {:else if isAtLimit}
-            <p class="form-message muted">{dayWord}的三个位置已经用完。</p>
+            <p class="form-message muted">{dayWord}的 {dailyCardLimit} 个位置已经用完。</p>
           {:else if isLoadingCards}
             <p class="form-message muted">正在读取本地数据库。</p>
           {/if}
@@ -811,6 +918,86 @@
             {/if}
           </button>
         </form>
+      </div>
+    </div>
+  {/if}
+
+  {#if isSettingsOpen}
+    <div class="modal-backdrop" role="presentation" on:click={handleModalBackdropClick}>
+      <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <section class="settings-panel">
+          <div class="composer-head">
+            <div>
+              <span class="eyebrow">本地</span>
+              <h2 id="settings-title">设置</h2>
+            </div>
+
+            <button type="button" class="icon-button" title="关闭" aria-label="关闭" on:click={closeSettings}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <label class="number-setting">
+            <span>每日卡片上限</span>
+            <input
+              type="number"
+              min={MIN_DAILY_CARD_LIMIT}
+              max={MAX_DAILY_CARD_LIMIT}
+              step="1"
+              value={settings.dailyCardLimit}
+              disabled={isSavingSettings || isLoadingSettings}
+              on:change={(event) => updateDailyCardLimit(event.currentTarget.value)}
+            />
+          </label>
+
+          <fieldset class="focus-group" disabled={isSavingSettings || isLoadingSettings}>
+            <legend>启动视图</legend>
+            <div class="segmented two-up">
+              <button
+                type="button"
+                class:active={settings.defaultViewMode === "list"}
+                aria-pressed={settings.defaultViewMode === "list"}
+                on:click={() => updateDefaultViewMode("list")}
+              >
+                列表
+              </button>
+              <button
+                type="button"
+                class:active={settings.defaultViewMode === "tree"}
+                aria-pressed={settings.defaultViewMode === "tree"}
+                on:click={() => updateDefaultViewMode("tree")}
+              >
+                卡片树
+              </button>
+            </div>
+          </fieldset>
+
+          <fieldset class="focus-group" disabled={isSavingSettings || isLoadingSettings}>
+            <legend>卡片密度</legend>
+            <div class="segmented two-up">
+              <button
+                type="button"
+                class:active={settings.cardDensity === "comfortable"}
+                aria-pressed={settings.cardDensity === "comfortable"}
+                on:click={() => updateCardDensity("comfortable")}
+              >
+                舒展
+              </button>
+              <button
+                type="button"
+                class:active={settings.cardDensity === "compact"}
+                aria-pressed={settings.cardDensity === "compact"}
+                on:click={() => updateCardDensity("compact")}
+              >
+                紧凑
+              </button>
+            </div>
+          </fieldset>
+
+          {#if settingsMessage}
+            <p class="form-message" class:muted={!settingsMessage.includes("失败")} role="status">{settingsMessage}</p>
+          {/if}
+        </section>
       </div>
     </div>
   {/if}

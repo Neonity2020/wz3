@@ -1,4 +1,3 @@
-export const DAILY_CARD_LIMIT = 3;
 const LEGACY_STORAGE_KEY = "wisdom-cards:v1";
 
 export type CardFocus = "灵感" | "判断" | "问题" | "原则";

@@ -29,6 +29,14 @@ struct WisdomCard {
     updated_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    default_view_mode: String,
+    card_density: String,
+    daily_card_limit: u8,
+}
+
 impl Database {
     fn new(app_handle: &AppHandle) -> Result<Self, Box<dyn Error>> {
         let app_data_dir = app_handle.path().app_data_dir()?;
@@ -53,6 +61,11 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS cards_date_key_idx ON cards(date_key);
             CREATE INDEX IF NOT EXISTS cards_created_at_idx ON cards(created_at);
+
+            CREATE TABLE IF NOT EXISTS settings (
+              key TEXT PRIMARY KEY NOT NULL,
+              value TEXT NOT NULL
+            );
             ",
         )?;
 
@@ -175,6 +188,51 @@ fn save_cards(cards: Vec<WisdomCard>, database: State<'_, Database>) -> Result<(
     transaction.commit().map_err(|error| error.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn load_settings(database: State<'_, Database>) -> Result<AppSettings, String> {
+    let connection = database
+        .connection
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let settings_json = connection
+        .query_row("SELECT value FROM settings WHERE key = 'app'", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap_or_else(|_| "{}".to_string());
+
+    Ok(serde_json::from_str(&settings_json).unwrap_or_else(|_| default_settings()))
+}
+
+#[tauri::command]
+fn save_settings(settings: AppSettings, database: State<'_, Database>) -> Result<(), String> {
+    let connection = database
+        .connection
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let settings_json = serde_json::to_string(&settings).map_err(|error| error.to_string())?;
+
+    connection
+        .execute(
+            "
+            INSERT INTO settings (key, value)
+            VALUES ('app', ?1)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            ",
+            [settings_json],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn default_settings() -> AppSettings {
+    AppSettings {
+        default_view_mode: "list".to_string(),
+        card_density: "comfortable".to_string(),
+        daily_card_limit: 3,
+    }
 }
 
 #[tauri::command]
@@ -301,6 +359,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_cards,
             save_cards,
+            load_settings,
+            save_settings,
             open_markdown_folder,
             open_pdf_attachment
         ])

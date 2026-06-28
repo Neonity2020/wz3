@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "三张智慧卡",
+  "productName": "智慧卡",
   "version": "0.1.0",
   "identifier": "com.andicode.wisdom-cards",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "三张智慧卡",
+        "title": "智慧卡",
         "width": 1180,
         "height": 780,
         "minWidth": 860,
@@ -24,7 +24,7 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": "all",
     "macOS": {
       "infoPlist": "Info.plist"

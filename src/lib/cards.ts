@@ -73,6 +73,66 @@ export function parseTags(rawTags: string): string[] {
     .slice(0, 5);
 }
 
+export interface TreeNode {
+  card: WisdomCard;
+  children: TreeNode[];
+  depth: number;
+}
+
+export function buildCardTree(cards: WisdomCard[]): TreeNode[] {
+  const childMap = new Map<string, WisdomCard[]>();
+  const cardMap = new Map<string, WisdomCard>();
+  const parentIds = new Set<string>();
+
+  for (const card of cards) {
+    cardMap.set(card.id, card);
+    parentIds.add(card.parentId);
+
+    if (card.parentId) {
+      const siblings = childMap.get(card.parentId);
+      if (siblings) {
+        siblings.push(card);
+      } else {
+        childMap.set(card.parentId, [card]);
+      }
+    }
+  }
+
+  function buildChildren(parentCardId: string, depth: number): TreeNode[] {
+    const siblings = childMap.get(parentCardId);
+    if (!siblings) return [];
+
+    return siblings
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((card) => ({
+        card,
+        children: buildChildren(card.id, depth + 1),
+        depth,
+      }));
+  }
+
+  const roots: WisdomCard[] = [];
+  const orphans: WisdomCard[] = [];
+
+  for (const card of cards) {
+    if (!card.parentId) {
+      roots.push(card);
+    } else if (!cardMap.has(card.parentId)) {
+      orphans.push(card);
+    }
+  }
+
+  const allRoots = [...roots, ...orphans].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
+
+  return allRoots.map((card) => ({
+    card,
+    children: buildChildren(card.id, 1),
+    depth: 0,
+  }));
+}
+
 export function sortCardsNewestFirst(cards: WisdomCard[]): WisdomCard[] {
   return [...cards].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }

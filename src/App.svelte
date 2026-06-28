@@ -10,6 +10,7 @@
     FileText,
     FileUp,
     FolderOpen,
+    Network,
     Paperclip,
     Plus,
     RotateCcw,
@@ -35,6 +36,7 @@
     type WisdomCard,
   } from "./lib/cards";
   import { loadPersistedCards, savePersistedCards } from "./lib/database";
+  import CardTree from "./lib/CardTree.svelte";
 
   const todayKey = getDateKey();
 
@@ -45,6 +47,7 @@
   let isEditorOpen = false;
   let isLoadingCards = true;
   let isSaving = false;
+  let viewMode: "list" | "tree" = "list";
   let body = "";
   let context = "";
   let mdLink = "";
@@ -309,6 +312,11 @@
     selectedDate = parentCard.dateKey;
   }
 
+  function onTreeSelectCard(card: WisdomCard) {
+    viewMode = "list";
+    selectedDate = card.dateKey;
+  }
+
   function getMarkdownLabel(link: string): string {
     return getFileLabel(link, "Markdown");
   }
@@ -421,15 +429,56 @@
       </div>
     </div>
 
-    <div class="day-meter" aria-label={`今日已写 ${todayCards.length} 张`}>
-      {#each todaySlotStates as filled, index}
-        <span class:filled aria-label={`第 ${index + 1} 张`}></span>
-      {/each}
-      <strong>{todayCards.length}/{DAILY_CARD_LIMIT}</strong>
+    <div class="topbar-actions">
+      <button
+        type="button"
+        class="topbar-action"
+        class:active={viewMode === "tree"}
+        on:click={() => (viewMode = "tree")}
+        title="卡片树"
+        aria-label="卡片树"
+      >
+        <Network size={18} />
+        <span>卡片树</span>
+      </button>
+
+      <div class="day-meter" aria-label={`今日已写 ${todayCards.length} 张`}>
+        {#each todaySlotStates as filled, index}
+          <span class:filled aria-label={`第 ${index + 1} 张`}></span>
+        {/each}
+        <strong>{todayCards.length}/{DAILY_CARD_LIMIT}</strong>
+      </div>
     </div>
   </section>
 
   <section class="workspace">
+    {#if viewMode === "tree"}
+      <section class="cards-panel tree-panel" aria-label="卡片树">
+        <div class="panel-toolbar">
+          <div>
+            <span class="eyebrow">全库</span>
+            <h2>卡片树</h2>
+          </div>
+
+          <div class="toolbar-actions">
+            <button
+              type="button"
+              class="secondary-action"
+              on:click={() => (viewMode = "list")}
+            >
+              <ChevronLeft size={17} />
+              <span>返回今日</span>
+            </button>
+          </div>
+        </div>
+
+        {#if errorMessage && !isEditorOpen}
+          <p class="panel-message" role="alert">{errorMessage}</p>
+        {/if}
+
+        <CardTree {cards} onSelectCard={onTreeSelectCard} onCreateChild={openChildCardEditor} />
+      </section>
+    {:else}
     <section class="cards-panel" aria-label="卡片列表">
       <div class="panel-toolbar">
         <div>
@@ -610,6 +659,7 @@
         {/if}
       </div>
     </section>
+    {/if}
   </section>
 
   {#if isEditorOpen}
